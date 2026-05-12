@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简历智能优化助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f6f8; height: 100vh; display: flex; flex-direction: column; }
+        .header { background: #fff; padding: 16px 24px; border-bottom: 1px solid #e8e8e8; display: flex; align-items: center; justify-content: space-between; }
+        .header h1 { font-size: 20px; font-weight: 600; color: #1a1a1a; }
+        .header-actions { display: flex; gap: 12px; }
+        .btn { padding: 8px 18px; border-radius: 6px; border: none; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+        .btn-primary { background: #4f46e5; color: #fff; }
+        .btn-primary:hover { background: #4338ca; }
+        .btn-secondary { background: #fff; color: #333; border: 1px solid #d0d5dd; }
+        .btn-secondary:hover { background: #f9fafb; }
+        .main { display: flex; flex: 1; overflow: hidden; padding: 20px; gap: 20px; }
+        .panel { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+        .panel-header { padding: 14px 20px; border-bottom: 1px solid #eee; font-weight: 600; font-size: 15px; display: flex; align-items: center; justify-content: space-between; }
+        .resume-edit { flex: 1; padding: 20px; font-size: 14px; line-height: 1.7; border: none; resize: none; outline: none; font-family: inherit; overflow-y: auto; }
+        .ai-output { flex: 1; padding: 20px; overflow-y: auto; font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+        .placeholder { color: #aaa; text-align: center; margin-top: 80px; }
+        .input-row { padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 10px; }
+        .input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; outline: none; }
+        .status-bar { padding: 8px 20px; background: #f0f4ff; color: #1e40af; font-size: 12px; border-top: 1px solid #dbeafe; min-height: 20px; }
+        .hidden { display: none; }
+        .file-label { cursor: pointer; color: #4f46e5; font-weight: 500; font-size: 13px; }
+        input[type="file"] { display: none; }
+    </style>
+</head>
+<body>
+<div class="header">
+    <h1>📄 简历智能优化助手</h1>
+    <div class="header-actions">
+        <label class="btn btn-secondary" for="resumeUpload">📤 上传我的简历</label>
+        <input type="file" id="resumeUpload" accept=".docx">
+        <label class="btn btn-secondary" for="jdUpload">📋 上传岗位JD (Word)</label>
+        <input type="file" id="jdUpload" accept=".docx">
+        <button class="btn btn-secondary" id="pasteJdBtn">📋 粘贴JD文字</button>
+        <button class="btn btn-primary" id="optimizeBtn">✨ 开始优化</button>
+        <button class="btn btn-primary" id="downloadBtn" style="background:#059669;">⬇️ 下载Word简历</button>
+    </div>
+</div>
+<div class="main">
+    <div class="panel">
+        <div class="panel-header"><span>📝 您的简历（可编辑）</span></div>
+        <textarea id="resumeText" class="resume-edit" placeholder="在此粘贴简历内容，或点击上方「上传我的简历」按钮上传Word文件..."></textarea>
+    </div>
+    <div class="panel">
+        <div class="panel-header"><span>🤖 AI优化建议</span></div>
+        <div id="aiOutput" class="ai-output"><div class="placeholder">上传简历和目标JD后，点击✨开始优化</div></div>
+        <div class="status-bar" id="statusBar">就绪</div>
+        <div class="input-row">
+            <input type="text" id="adjustInput" placeholder="输入调整指令..." />
+            <button class="btn btn-primary" id="adjustBtn" style="background:#6d28d9;">✏️ 调整此处</button>
+            <button class="btn btn-secondary" id="clearOutputBtn">清空输出</button>
+        </div>
+    </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script>
+(function() {
+    const BOT_ID = "7638877866679877683";
+    const API_TOKEN = "pat_jYpcvhDgChDxzEglpR6rFEljgStsjuHJvjC2M3j2Uq243iNjOGT7INgufASKOYWw";
+    const COZE_API_URL = "https://api.coze.cn/open_api/v2/chat";
+
+    const resumeUpload = document.getElementById('resumeUpload');
+    const jdUpload = document.getElementById('jdUpload');
+    const resumeText = document.getElementById('resumeText');
+    const aiOutput = document.getElementById('aiOutput');
+    const statusBar = document.getElementById('statusBar');
+    const optimizeBtn = document.getElementById('optimizeBtn');
+    const adjustBtn = document.getElementById('adjustBtn');
+    const adjustInput = document.getElementById('adjustInput');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const clearOutputBtn = document.getElementById('clearOutputBtn');
+    const pasteJdBtn = document.getElementById('pasteJdBtn');
+
+    let currentJdText = '';
+
+    function setStatus(text) { statusBar.textContent = text; }
+
+    async function readWordFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    const result = await mammoth.extractRawText({ arrayBuffer });
+                    resolve(result.value.trim());
+                } catch (err) { reject(err); }
+            };
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    async function callCozeAPI(streamCallback, userMessage) {
+        const requestBody = {
+            bot_id: BOT_ID,
+            user_id: "web_user_" + Date.now(),
+            stream: true,
+            additional_messages: [{ role: "user", content: userMessage, content_type: "text" }]
+        };
+        const response = await fetch(COZE_API_URL, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + API_TOKEN, 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+            body: JSON.stringify(requestBody)
+        });
+        if (!response.ok) { const errorText = await response.text(); throw new Error(`API请求失败: ${response.status} ${errorText}`); }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (line.startsWith('data:')) {
+                    const dataStr = line.substring(5).trim();
+                    if (dataStr === '[DONE]') return;
+                    if (!dataStr) continue;
+                    try {
+                        const data = JSON.parse(dataStr);
+                        if (data.type === 'answer' && data.content) { streamCallback(data.content); }
+                    } catch (e) {}
+                }
+            }
+        }
+    }
+
+    function appendToOutput(text) {
+        const placeholder = aiOutput.querySelector('.placeholder');
+        if (placeholder) placeholder.remove();
+        aiOutput.textContent += text;
+        aiOutput.scrollTop = aiOutput.scrollHeight;
+    }
+
+    function clearOutput() { aiOutput.innerHTML = '<div class="placeholder">已清空，准备接收新内容</div>'; }
+
+    async function sendMessage(message, clearBefore = true) {
+        if (clearBefore) { aiOutput.innerHTML = ''; }
+        setStatus('正在思考...');
+        try { await callCozeAPI(appendToOutput, message); setStatus('生成完成'); }
+        catch (error) { console.error(error); aiOutput.innerHTML += `\n\n❌ 错误: ${error.message}`; setStatus('出错: ' + error.message); }
+    }
+
+    resumeUpload.addEventListener('change', async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        setStatus('正在解析简历文档...');
+        try { const text = await readWordFile(file); resumeText.value = text; setStatus('简历已加载'); }
+        catch (err) { setStatus('解析失败: ' + err.message); }
+    });
+
+    jdUpload.addEventListener('change', async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        setStatus('正在解析JD文档...');
+        try { const text = await readWordFile(file); currentJdText = text; setStatus('JD已加载'); }
+        catch (err) { setStatus('解析失败: ' + err.message); }
+    });
+
+    pasteJdBtn.addEventListener('click', () => {
+        const jd = prompt('请粘贴岗位描述（JD）文字：');
+        if (jd && jd.trim()) { currentJdText = jd.trim(); setStatus('JD已粘贴'); }
+    });
+
+    optimizeBtn.addEventListener('click', async () => {
+        const resume = resumeText.value.trim();
+        if (!resume) { alert('请先上传或粘贴简历内容'); return; }
+        if (!currentJdText) { alert('请先上传JD或粘贴岗位描述'); return; }
+        const message = `请根据以下简历和职位描述，为我优化简历。要求尽量匹配JD，挖掘可迁移能力，保持真实不造假，输出完整优化版简历。\n\n【我的原始简历】\n${resume}\n\n【目标职位描述】\n${currentJdText}`;
+        aiOutput.innerHTML = '';
+        await sendMessage(message);
+    });
+
+    adjustBtn.addEventListener('click', async () => {
+        const instruction = adjustInput.value.trim();
+        if (!instruction) { alert('请输入调整指令'); return; }
+        const currentAiText = aiOutput.textContent || '';
+        const message = `基于以下优化后的简历内容，请按用户指令进行局部修改。\n\n【当前的优化简历】\n${currentAiText}\n\n【用户指令】\n${instruction}`;
+        await sendMessage(message);
+        adjustInput.value = '';
+    });
+
+    clearOutputBtn.addEventListener('click', () => { clearOutput(); setStatus('输出已清空'); });
+
+    downloadBtn.addEventListener('click', () => {
+        const text = aiOutput.textContent.trim();
+        if (!text || text === '已清空，准备接收新内容') { alert('没有可下载的优化内容'); return; }
+        const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><title>优化简历</title></head><body style="font-family: '微软雅黑', sans-serif; font-size: 14px; line-height: 1.6;">${text.replace(/\n/g, '<br>')}</body></html>`;
+        const blob = new Blob(['\ufeff' + htmlContent], { type: 'application/msword' });
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getDate().toString().padStart(2,'0')}`;
+        saveAs(blob, `优化简历-${dateStr}.doc`);
+        setStatus('Word文件已下载');
+    });
+
+    setStatus('就绪');
+})();
+</script>
+</body>
+</html>
